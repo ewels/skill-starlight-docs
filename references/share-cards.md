@@ -135,9 +135,23 @@ font: { title: { families: ['Michroma', 'Noto Sans'] } },
 
 ## Pages the route cannot enumerate
 
-Injected routes — `starlight-openapi`, `starlight-pydocs`, `starlight-blog` archives, anything a plugin generates — are **not** content collection entries. The image route cannot see them, so it cannot make a card for each one. There is no clever workaround for a static build: a `getStaticPaths` needs the list up front.
+Injected routes — `starlight-openapi`, `starlight-pydocs`, `starlight-blog` archives, anything a plugin generates — are **not** content collection entries, so `getCollection()` does not return them and the image route cannot make a card for each one. A static build needs the list up front; there is no runtime escape hatch.
 
-Give them the site card instead. That is what the `ids.has(id) ? id : 'index'` fallback in the override does: pages with a generated card get theirs, everything else gets the home page's. A site-branded card beats a grey box, and the title and description in the unfurl are still page-specific because Starlight sets those from the page's own frontmatter.
+**First ask the plugin for its pages.** A plugin that injects routes knows what it injected, and some export it — `starlight-pydocs` has `listPydocsPages(context)`, taking its `virtual:starlight-pydocs/context` module and returning a slug, title and description per page. Merge that list into `pages` and the generated pages get proper cards:
+
+```ts
+import { listPydocsPages } from 'starlight-pydocs/pages';
+import context from 'virtual:starlight-pydocs/context';
+
+const pages = {
+  ...Object.fromEntries((await getCollection('docs')).map((entry) => [entry.id, entry.data])),
+  ...Object.fromEntries((await listPydocsPages(context)).map((page) => [page.slug, page])),
+};
+```
+
+Check the plugin's exports before assuming it can't be done; if it has no such export but is maintained, asking for one is reasonable — it is a small function over a model the plugin already built.
+
+If there really is no list, give those pages the site card. That is what the `ids.has(id) ? id : 'index'` fallback in the override does: pages with a generated card get theirs, everything else gets the home page's. A site-branded card beats a grey box, and the title and description in the unfurl are still page-specific because Starlight sets those from the page's own frontmatter.
 
 Only invest more when a plugin's pages are the ones people actually share.
 

@@ -46,6 +46,15 @@ Alternatives: `starlight-md-txt` serves the same thing at `.md.txt` URLs (better
 
 `starlight-dot-md` and `starlight-md-txt` are the standalone options if you specifically don't want buttons on the page. Both predate Astro 7 and declare no support for it, so prefer `starlight-page-actions` unless a buttonless site is a hard requirement.
 
+### Two extensions from one route
+
+Some browsers and hosts download a `.md` rather than displaying it, which is the whole reason `starlight-md-txt` serves `.md.txt` instead. Where you control the route — a plugin you maintain, or your own endpoint — register the same handler at both `[...slug].md` and `[...slug].md.txt` rather than installing a second plugin. One entrypoint, one `getStaticPaths`, two patterns.
+
+Two things that only a build reveals:
+
+- **On a static host the content type comes from the host's extension map, not from the route.** `.md` is served as `text/markdown` and `.txt` as `text/plain` whatever header the handler sets. Set it anyway, chosen from the pathname, because an SSR host does send what you set.
+- **Advertise only the `.md`.** The `.md.txt` alias exists for humans whose browser downloads the other one. Pointing a crawler at `text/plain` tells it strictly less than `text/markdown` does, so it does not belong in `rel="alternate"` (see [Discovery](#discovery)).
+
 ## Content negotiation
 
 An alternative to `.md` URLs: detect agent user-agents (`Claude-User`, `ChatGPT-User`, `cursor-agent`) or `Accept: text/markdown` at the edge and serve Markdown from the canonical URL. This works without the agent knowing any URL convention, which is its whole appeal.
@@ -120,6 +129,22 @@ Six options, all optional:
 The plugin also documents an Agent Skills page of its own, which is worth a look given it overlaps with this skill's territory.
 
 **`starlight-page-actions` also generates `llms.txt` and serves the raw `.md` files** (via `vite-plugin-static-copy`). That makes it collide with `starlight-llms-txt` over `llms.txt`, and with any per-page Markdown plugin over the `.md` routes. The split to use: **`starlight-llms-txt` owns `llms.txt`; `starlight-page-actions` owns the `.md` routes.** Enforce it by leaving `baseUrl` unset on page-actions, which stops it writing `llms.txt` at all.
+
+### Its buttons appear on generated pages, and break there
+
+Any plugin that contributes pages through `injectRoute` — `starlight-openapi`, API-reference generators, anything that builds pages from a schema or a source tree — produces pages that are not content collection entries. This breaks `starlight-page-actions` in a way nothing reports:
+
+- It builds its raw `.md` files by **copying `src/content/docs/**`** with `vite-plugin-static-copy`, so generated pages get no `.md`.
+- It renders its buttons through a **`PageTitle` component override**, and injected routes that render Starlight's `StarlightPage` component *do* pick up component overrides.
+
+So the buttons appear on every generated page and fetch a URL that 404s. The build is green, the page looks right, `astro check` is clean, and only clicking Copy Markdown on a generated page finds it. This is the same blindness as the `llms.txt` gap below, but louder: there, content is silently missing; here, a visible control is silently broken.
+
+Two ways out, in preference order:
+
+- **Have the generating plugin serve `<path>.md` itself.** Then the two conventions meet and the buttons work with no coordination between the plugins — page-actions asks for `<pathname>.md` and something answers. If you maintain the plugin, this is the fix. If you don't, it is worth an issue, because every site using it has the same broken buttons.
+- **Turn the buttons off for those pages.** `pageActions: false` in frontmatter disables them per page; the component reads `starlightRoute.entry.data.pageActions`. An injected route that builds its own frontmatter can set it. Otherwise write your own `PageTitle` override that renders the plugin's version only for paths that have a `.md`, and Starlight's default elsewhere — a site-level `components` entry wins over the plugin's.
+
+Check it the way you check the `llms.txt` gap: build, then fetch a generated page's path plus `.md` and confirm it is not a 404.
 
 Note the two `llms.txt` implementations are not equivalent. `starlight-page-actions` generates an index of documentation URLs from the sidebar config; `starlight-llms-txt` generates `llms.txt` plus `llms-full.txt` and `llms-small.txt` containing the actual content, with `customSets`, `promote`/`demote` and `minify`. If content sets matter — and on a multi-product site they do — let `starlight-llms-txt` own `llms.txt` and leave `baseUrl` unset on page-actions so it doesn't write a competing file.
 
@@ -239,8 +264,9 @@ Mitigations:
 Generating the files is the easy half. Make them findable:
 
 - **Link them from the docs.** A line in the site footer or on the docs index pointing at `/llms.txt` is the single highest-value step, and the one Astro's docs omitted.
-- **`<link rel="alternate" type="text/markdown">`** in the page head pointing at the `.md` variant, so a crawler on any page can find the source without guessing the URL scheme. Add via Starlight's `head` config or a route middleware.
-- **`robots.txt`** — reference `/llms.txt` in a comment. Cheap, occasionally read.
+- **`<link rel="alternate" type="text/markdown">`** in the page head pointing at the `.md` variant, so a crawler on any page can find the source without guessing the URL scheme. **No plugin does this for you** — neither Starlight nor `starlight-page-actions` emits the tag, and a built site has zero occurrences of it until you add one. Use Starlight's `head` config, a `Head` component override, or route middleware. A plugin that owns injected routes should emit its own, through whatever head mechanism its route uses (`frontmatter.head` on `StarlightPage`, a layout prop in vanilla Astro), so that sites get it without configuring anything. Where both a plugin and the site emit tags, exclude one set or pages end up advertising twice.
+- **`robots.txt`** — reference `/llms.txt` in a comment. **Only worth doing when the site is at an origin root**: a custom domain, or a GitHub user/organisation page. On a **GitHub project page** (`user.github.io/repo/`, the common Starlight deployment and the one that forces a `base` setting) it is inert — crawlers fetch `robots.txt` only from the origin root, so `public/robots.txt` builds to `/repo/robots.txt` and is never read. The pointer has to live in whatever repo owns the apex, which is usually somebody else's. Skip it rather than shipping a file that does nothing.
+- **HTTP `Link: <…>; rel="alternate"; type="text/markdown"` headers** are the same signal without the HTML, and are unavailable on any static host — GitHub Pages included. Where the deployment has no header control, the head tag is the entire discovery story, which raises how much the point above matters.
 - **Page action buttons are themselves discovery** — a visible button beats any convention, because the human copies the Markdown and pastes it wherever they like.
 
 If measuring uptake, filter server logs by agent user-agents (`Claude-User`, `ChatGPT-User`, `cursor-agent` and similar) rather than counting raw page views on `/llms.txt`. Page views on a machine-readable file are close to meaningless as a signal.
@@ -264,7 +290,7 @@ For a docs site starting from nothing, in priority order:
 1. `starlight-llms-txt` with `projectName`, `description`, and `customSets` — the latter is not optional on a multi-product site. Let this own `llms.txt`.
 2. `starlight-page-actions` for the copy/open buttons, letting it own the raw `.md` routes. Leave `baseUrl` unset so it doesn't write a competing `llms.txt`. Not `starlight-contextual-menu`, which is stale.
 3. A dedicated per-page Markdown plugin (`starlight-dot-md`) only if step 2's own route handling doesn't fit.
-4. A visible link to `/llms.txt` and `rel="alternate"` head tags.
+4. A visible link to `/llms.txt`, and `rel="alternate"` head tags — which you write yourself, since no plugin emits them. On a plugin-generated section of the site, confirm the copy buttons and the `.md` routes actually reach those pages.
 5. `description` frontmatter on every page.
 
 Steps 1–3 are an afternoon. Step 4 is fifteen minutes and is what makes 1–3 matter. Step 5 is ongoing and is the one that decays.
@@ -283,7 +309,11 @@ Then check by hand:
 - Does `llms-full.txt` contain converted component content, or empty gaps where components were? Gaps mean `rawContent: true` is needed.
 - Do interactive widgets appear as noise? Add `customSelectors`.
 - Fetch a `.md` URL from the built site and confirm it returns Markdown with the right content type, not HTML and not a download.
+- **Fetch a `.md` for a page that came from an injected route**, not just a hand-written one. This is where the copy buttons break, and a hand-written page will not show it.
+- `grep` the built HTML for `rel="alternate"` and confirm it appears exactly once per page — zero means nothing advertises the Markdown, twice means a plugin and the site are both claiming the page.
 - Confirm only one plugin is registering Markdown routes.
+
+Watch the content types when writing assertions: `.md` comes back as `text/markdown` but `.txt` (so `llms.txt`, and any `.md.txt` alias) comes back as `text/plain`. An expectation copied from one test to the other fails.
 
 ## Checking plugin compatibility
 
@@ -311,7 +341,7 @@ Snapshot, August 2026 (Astro 7.2.2, Starlight 0.41.7):
 | `starlight-llms-txt` 0.11.0 | ✅ Declares `starlight >=0.41.0`, `astro ^7.0.0` |
 | `starlight-openapi` 0.26.1 | ✅ Declares `starlight >=0.41`, `astro >=7.0.2`, `@astrojs/markdown-satteri >=0.3.2` |
 | `starlight-links-validator` 0.25.3 | ✅ Same, and now depends on `@astrojs/markdown-satteri` — the Sätteri incompatibility noted in Starlight's own repo in June has been fixed |
-| `starlight-page-actions` 0.7.0 | ⚠️ Post-Astro 7 release, open range, verify |
+| `starlight-page-actions` 0.7.0 | ⚠️ Post-Astro 7 release, open range, verify — **built and worked on Astro 7.2.1 / Starlight 0.41.7 (Aug 2026)**: buttons render, `.md` routes serve, `llms.txt` left alone with `baseUrl` unset. Pulls `vite-plugin-virtual` 0.5.0, which declares `vite <=7`, so pnpm warns on Vite 8 and installs anyway |
 | `starlight-llm-actions` 0.9.0 | ⚠️ Same |
 | `starlight-dot-md` 0.2.1 | ⚠️ April 2026, pre-Astro 7 |
 | `starlight-md-txt` 0.1.0 | ⚠️ June 2026, pre-Astro 7 |
