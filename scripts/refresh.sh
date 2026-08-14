@@ -46,6 +46,7 @@ plugins() {
            starlight-page-context-action starlight-dot-md starlight-md-txt \
            starlight-openapi starlight-links-validator starlight-package-managers \
            starlight-mcp starlight-agentready starlight-contextual-menu \
+           astro-og-canvas \
            @expressive-code/plugin-collapsible-sections @expressive-code/plugin-line-numbers; do
     curl -sf --max-time 12 "https://registry.npmjs.org/${p//\//%2f}" 2>/dev/null | python3 -c "
 import sys, json
