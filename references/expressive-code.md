@@ -11,6 +11,7 @@ Everything after the language identifier on an opening fence is the **meta strin
 - [Frames and titles](#frames-and-titles) — `title=`, `frame=`
 - [Word wrap](#word-wrap) — `wrap`, `preserveIndent`, `hangingIndent`
 - [Collapsible sections](#collapsible-sections) — `collapse=`, `collapseStyle=` (plugin)
+- [Line width](#line-width-and-the-marker-that-scrolls-out-of-view) — the ~60-character budget for marked code
 - [Line numbers](#line-numbers) — `showLineNumbers`, `startLineNumber=` (plugin)
 - [The `<Code>` component](#the-code-component) — props, dynamic code, `?raw` imports
 - [Config](#config) — `defaultProps`, `overridesByLang`, `ec.config.mjs`
@@ -47,6 +48,18 @@ function demo() {
 
 Use `ins`/`del` for actual changes and bare `{}` for "look here" — the semantic distinction matters to readers using colour cues.
 
+**This is the single most over-applied piece of the syntax.** `ins` renders a green `+` gutter, which tells the reader *this line was added to a file that previously existed without it*. A from-scratch example is not a change, however much the reader is "adding" it by typing it out:
+
+````md
+<!-- WRONG: nothing is being changed, the whole file is new -->
+```js title="astro.config.mjs" ins={9-14}
+
+<!-- RIGHT: neutral marker, "these are the lines that matter" -->
+```js title="astro.config.mjs" {9-14}
+````
+
+Reach for `ins`/`del` only when the block shows a before and an after. If it shows one state of the world, every marker is a bare `{}`. When a block really is a change, `diff lang="js"` is usually clearer than `ins`/`del` anyway.
+
 ## Labelled markers
 
 Attach a text label to a marker, rendered as a coloured box on the first line of the range. Quote the label and follow it with a colon inside the brace:
@@ -74,7 +87,25 @@ Short labels (2–3 characters) can collide with the code; increase the `codePad
 ```
 ````
 
-This is the right tool for step-by-step walkthroughs of a single block — better than splitting the example across several fences.
+### Prefer a code comment
+
+**Reach for an ordinary comment in the example before reaching for a label.** A labelled marker renders as a caption box floating beside the code: it reads as site chrome rather than as part of the example, it is lost the moment anyone copies the block, and it forces a blank line into the source to sit on. A `//` comment has none of those problems and is what the reader would have written themselves.
+
+````md
+<!-- Prefer this -->
+```js title="astro.config.mjs" {10-15}
+      // Name the package and point griffe at its source.
+      plugins: [
+        starlightPydocs({
+          packages: [{ name: 'mypkg', search: ['../src'] }],
+        }),
+      ],
+```
+````
+
+Keep the highlight range when you do this — the comment says *what*, the highlight says *where to look*, and they work together. Dropping the range because "the comment explains it now" loses the visual anchor that made the block scannable.
+
+Labelled markers still earn their place where a comment cannot go: a language with no comment syntax in that position, a block where an added comment would change the meaning (a `diff`, a terminal session, a data file), or an annotation *about an absence* — "no `root` here, because the paths are already repository-relative" — which has no line of its own to attach to.
 
 ## Diff syntax
 
@@ -155,6 +186,8 @@ function Watch-Tail { Get-Content -Tail 20 -Wait $args }
 ```
 ````
 
+`frame="none"` does **not** remove the copy button — it is rendered whenever `showCopyToClipboardButton` is on, regardless of frame type. Suppressing frames on a run of one-line install commands costs you nothing in copyability.
+
 Relevant plugin options (set in config, not per-block): `showCopyToClipboardButton` (default `true`), `removeCommentsWhenCopyingTerminalFrames` (default `true` — strips `#` comment lines from copied terminal text, so instructions in comments don't end up pasted into a shell), `extractFileNameFromCode`.
 
 ## Word wrap
@@ -189,6 +222,87 @@ Requires `@expressive-code/plugin-collapsible-sections`. Collapsed lines are rep
 `collapsePreserveIndent` (default `true`) indents the summary line to match the contained code.
 
 Set a project-wide default via `defaultProps: { collapseStyle: 'collapsible-auto' }` rather than repeating it on every block. `collapsible-auto` is a better default than `github` for reference docs, since readers often want to re-hide the boilerplate.
+
+### Never collapse five lines or fewer
+
+A `3 collapsed lines` summary is taller than the three import lines it hides and costs a click to read them. It looks like a feature being demonstrated rather than a page being made readable. Six lines is a sensible floor. If a range falls below it, delete the `collapse=` — not every example needs one.
+
+### The pattern worth knowing: a whole file, mostly hidden
+
+The obvious use of `collapse=` is trimming a long example. The more valuable one is the opposite move — it turns a **fragment into a located example**.
+
+Documentation is full of snippets like this, and every one of them leaves a beginner asking *where does this go?*:
+
+````md
+```js
+packages: [{ name: 'mypkg', search: ['../src'], docstringStyle: 'numpy' }];
+```
+````
+
+Show the entire config file instead, and collapse everything that is not the point:
+
+````md
+```js title="astro.config.mjs" collapse={1-8, 18-23} "docstringStyle: 'numpy'"
+import starlight from '@astrojs/starlight';
+import { defineConfig } from 'astro/config';
+import starlightPydocs, { pydocsSidebarGroup } from 'starlight-pydocs';
+
+export default defineConfig({
+  integrations: [
+    starlight({
+      title: 'My project',
+      plugins: [
+        starlightPydocs({
+          packages: [
+            {
+              name: 'mypkg',
+              search: ['../src'],
+              docstringStyle: 'numpy',
+            },
+          ],
+        }),
+      ],
+      sidebar: [{ label: 'API reference', items: [pydocsSidebarGroup] }],
+    }),
+  ],
+});
+```
+````
+
+The reader sees the option, its indentation, and the keys it nests under, and can expand for the rest. `title=` alone names the file; this shows the *position in* the file, which is the part people actually get wrong.
+
+Collapse the leading scaffolding and the trailing scaffolding as two large ranges, and leave the path down to the option visible — collapsing the `starlight({` / `plugins: [` nesting defeats the purpose, because that nesting is the answer to the question.
+
+## Line width, and the marker that scrolls out of view
+
+On a Starlight page with both sidebar and table of contents, the code column fits roughly **60–65 characters** at a common laptop width. Past that the block scrolls horizontally. That is fine for code the reader skims — and useless for code you have marked, because the highlight can sit entirely off the right edge. `docstringStyle: 'numpy'` inline-marked at the end of an 85-character line is invisible until someone drags a scrollbar they may not notice.
+
+`astro build` cannot see this. Neither can a line-count check. It only shows up in a browser.
+
+So: **keep marked content inside about 60 characters, measured from the fence's own indentation** (a fence nested in a `<Steps>` list item is already indented three spaces before its code starts). The usual fix is breaking one object literal across lines:
+
+```js
+              sourceLink: {
+                host: 'github',
+                repo: 'you/mypkg',
+                ref: 'main',
+                root: '..',
+              },
+```
+
+**The counter-rule matters just as much.** This is a budget for lines carrying markers, not a formatter. Applied bluntly it produces worse code than it prevents:
+
+```js
+// An idiomatic 71-character import…
+import starlightPydocs, { pydocsSidebarGroup } from 'starlight-pydocs';
+
+// …is not improved by this.
+import starlightPydocs, {
+  pydocsSidebarGroup,
+} from 'starlight-pydocs';
+```
+
+An unmarked line that runs long and scrolls is a non-event. Leave it alone. When a long line genuinely cannot be broken without changing its value — a URL template, a long string literal — add `wrap` to the fence instead: it is display-only, and the clipboard still yields the original.
 
 ## Line numbers
 
@@ -275,6 +389,10 @@ Marker colours are LCH-based: `markHue` (default `284`, blue), `insHue` (`136`, 
 ## Gotchas
 
 - **Unknown meta is silently ignored.** No error, just a plain block. Verify rendered output rather than trusting the fence looks right.
+- **`ins=` on an example that shows no change** is the most common misuse. Green means added. See [Line markers](#line-markers).
+- **A marker on code that scrolls off the right edge** annotates nothing. See [Line width](#line-width-and-the-marker-that-scrolls-out-of-view).
+- **A labelled marker where a comment would do** reads as chrome and dies on copy-paste. See [Prefer a code comment](#prefer-a-code-comment).
+- **Collapsing two or three lines** costs a click to save nothing. Six-line floor.
 - **Under Sätteri** (the default Markdown processor from Astro 7, and the recommended one), Expressive Code runs as a Sätteri HAST plugin rather than a rehype plugin. This is automatic and needs no config change. `rehype-expressive-code` is the current package; `remark-expressive-code` is deprecated. See `references/markdown-pipeline.md`.
 - **Off-by-one line numbers build cleanly.** Count from 1, count blank lines, and check in the browser when ranges matter.
 - **`startLineNumber` does not shift markers.** Ever.

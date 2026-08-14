@@ -156,6 +156,28 @@ export default defineConfig({
 });
 ```
 
+### It only sees the content collection
+
+`starlight-llms-txt` builds its output from the `docs` content collection — the Markdown under `src/content/docs/`. **Pages contributed by a plugin as injected routes are invisible to it**, and they are not a corner case: `starlight-openapi`, `starlight-pydocs` and anything else that generates reference pages works that way. On a site whose API reference is generated, `llms-full.txt` silently contains the prose guides and none of the reference.
+
+There is no option that makes it crawl those routes. The bridge is `optionalLinks`, pointing at whatever the generating plugin publishes itself (several of them emit a per-package `llms.txt` of their own):
+
+```js
+starlightLlmsTxt({
+  optionalLinks: [
+    {
+      label: 'mypkg API reference (Markdown)',
+      url: 'https://docs.example.com/api/mypkg/llms.txt',
+      description: 'Every documented module, class and function in mypkg.',
+    },
+  ],
+});
+```
+
+`optionalLinks` entries take `label`, `url` and an optional `description`, and land under an `## Optional` heading. Use absolute URLs — the file is read by clients with no notion of your base path.
+
+Check this rather than assuming: build the site and grep `dist/llms-full.txt` for a symbol that only exists on a generated page. If it is missing, wire up `optionalLinks`.
+
 ### Options worth setting
 
 `projectName` (defaults to Starlight's `title`) and `description` (defaults to Starlight's `description`) — set both explicitly. The site title is often a bare product name that tells a model nothing; per llmstxt.org the description should be a short summary carrying the key information needed to interpret everything else. `details` adds further Markdown after it.
